@@ -1,0 +1,40 @@
+1.Assembler directive are instructions given to the assembler that do not generate machine code, but instead control the assembly process(like defining data,reserving memory,setting starting address, etc).
+
+2. assembler directive are instractions given to assembler that do not generatw machine code,but instead control the assembly process(like defining data,reserving memory,setting starting address,etc.)
+
+3.assembler drectives are instruction given to assembler that do not generate machine code, but instead control the assembly process(like defining data,reserving memory,setting starting address,etc).
+
+4.assembler directive are instruction given to the assembler that do not generate machine code,but instead control the assembly process(like defining data, reseaving memory,setting starting address,etc),
+
+1. any four commonly used assembler directives
+	1. START
+		specifies the starting address of the program
+		specifiers the starting of the program
+		specifies the starting address of the program
+		specifies the starting address of the program
+		specifier thr starting address of the program
+		START 1000
+		the ptogram will be loaded from memory location 1000
+		the program will be loaded from memory location 1000
+		the program will be loaded from memory location 1000
+	2.END
+		indicates the end of the source program
+		indicates the end of the soure program
+		indicates the end of the source program
+		indicates the end of the source program
+		
+
+	3.BYTE
+		used to define and initialize a byte of data
+		used to define and initialize a byte of data
+		used to define and initialize a byte of data
+		used to define and initialize a byte of data
+		used to define and initialize a byte of data
+
+	used to define and initialize a byte of data
+
+	4.WORD
+
+	used to difine a word(usually 3 bytes in SIC architechure)
+	used to define a word(usually 3 bytes inSIC architecture).
+	used to define a word(usually 3 bytes in SIC architecture).

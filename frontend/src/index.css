@@ -1,0 +1,68 @@
+@import url("https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-base: #0a0a0b;
+  --bg-surface: #111113;
+  --bg-elevated: #1a1a1e;
+  --border: #2a2a30;
+  --border-subtle: #1e1e24;
+  --accent: #f5a623;
+  --accent-dim: rgba(245, 166, 35, 0.12);
+  --text-primary: #f0ede8;
+  --text-secondary: #7a7880;
+  --text-muted: #44424a;
+  --checker-light: #c8c8c8;
+  --checker-dark: #a0a0a0;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; margin: 0; padding: 0; }
+
+body {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  font-family: "DM Sans", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.checker-bg {
+  background-image: linear-gradient(45deg, var(--checker-dark) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--checker-dark) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--checker-dark) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--checker-dark) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0px;
+  background-color: var(--checker-light);
+}
+
+.drag-active {
+  border-color: var(--accent) !important;
+  background-color: var(--accent-dim) !important;
+  box-shadow: 0 0 0 1px var(--accent), inset 0 0 40px var(--accent-dim);
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner { animation: spin 0.9s linear infinite; }
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fade-up { animation: fadeUp 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
+.shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.25), transparent);
+  animation: shimmer 1.4s ease infinite;
+}
