@@ -16,10 +16,24 @@ from auth import (
 app = FastAPI(title="EditNest API", version="1.0.0")
 
 create_tables()
+# Pre-download the rembg model on startup
+from rembg import new_session
+import threading
+
+def preload_model():
+    print("Pre-loading AI model...")
+    new_session("u2net")
+    print("AI model loaded!")
+
+threading.Thread(target=preload_model, daemon=True).start()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "https://editnest-theta.vercel.app"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
