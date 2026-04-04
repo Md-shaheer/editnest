@@ -5,7 +5,7 @@ import ResultView from "./components/ResultView";
 import Header from "./components/Header";
 import AuthPage from "./components/AuthPage";
 
-const API_URL = "http://localhost:8080";
+const API_URL = "https://editnest.onrender.com";
 
 export default function App() {
   const [user, setUser] = useState(null);
