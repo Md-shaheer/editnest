@@ -4,10 +4,7 @@ import ProcessingState from "./components/ProcessingState";
 import ResultView from "./components/ResultView";
 import Header from "./components/Header";
 import AuthPage from "./components/AuthPage";
-
-const API_URL = import.meta.env.DEV
-  ? "http://localhost:8000"
-  : "https://editnest-api.onrender.com";
+import { API_URL, REQUEST_TIMEOUT_MS } from "./api";
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -75,12 +72,19 @@ export default function App() {
     setProgress(10);
 
     let ticker;
+    let timeoutId;
+    let didTimeout = false;
     try {
       ticker = setInterval(() => {
-        setProgress((p) => Math.min(p + Math.random() * 8, 85));
+        setProgress((p) => Math.min(p + Math.random() * 8, 99)); // Cap at 99% to show continuous progress
       }, 400);
 
       abortControllerRef.current = new AbortController();
+      timeoutId = window.setTimeout(() => {
+        didTimeout = true;
+        abortControllerRef.current?.abort();
+      }, REQUEST_TIMEOUT_MS);
+
       const formData = new FormData();
       formData.append("file", file);
       const token = localStorage.getItem("token");
@@ -110,8 +114,10 @@ export default function App() {
       setProgress(100);
       setPhase("done");
     } catch (err) {
-      if (ticker) clearInterval(ticker);
       if (err.name === "AbortError") {
+        if (didTimeout) {
+          setErrorMsg("The request timed out. Please try again, or check that the backend URL is correct.");
+        }
         setPhase("idle");
         setProgress(0);
         return;
@@ -119,6 +125,10 @@ export default function App() {
       setErrorMsg(err.message || "Something went wrong.");
       setPhase("idle");
       setProgress(0);
+    } finally {
+      if (ticker) clearInterval(ticker);
+      if (timeoutId) window.clearTimeout(timeoutId);
+      abortControllerRef.current = null;
     }
   }, [originalUrl, resultUrl, handleLogout]);
 

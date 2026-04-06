@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { API_URL } from "../api";
 
 const tabs = ["Side by Side", "Before", "After"];
 
@@ -28,8 +29,6 @@ export default function ResultView({ originalFile, resultBlob, originalUrl, resu
   const handleGenerate = async () => {
     if (!aiPrompt.trim() || !resultBlob) return;
     setIsGenerating(true);
-
-    const API_URL = import.meta.env.DEV ? "http://localhost:8000" : "https://editnest-api.onrender.com";
 
     try {
       const reader = new FileReader();

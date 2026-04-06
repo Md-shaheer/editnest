@@ -1,9 +1,6 @@
 import { useState, useEffect } from "react";
 import { signInWithGoogle } from "../firebase";
-
-const API_URL = import.meta.env.DEV
-  ? "http://localhost:8000"
-  : "https://editnest-api.onrender.com";
+import { API_URL } from "../api";
 
 export default function AuthPage({ onLogin }) {
   const [mode, setMode] = useState("login");
