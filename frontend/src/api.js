@@ -1,5 +1,5 @@
 const LOCAL_API_URL = "http://localhost:8000";
-const PROD_API_URL = "https://glistening-serenity-production.up.railway.app";
+const PROD_API_URL = "/api";
 
 const normalizeApiUrl = (value) => value.replace(/\/+$/, "");
 
