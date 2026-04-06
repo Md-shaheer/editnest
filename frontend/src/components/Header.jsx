@@ -1,7 +1,12 @@
 export default function Header({ user, onLogout }) {
   return (
-    <header className="w-full px-6 py-4 flex items-center justify-between"
-      style={{ borderBottom: "1px solid var(--border-subtle)", background: "var(--bg-base)" }}>
+    <header className="w-full px-6 py-4 flex items-center justify-between sticky top-0 z-50"
+      style={{ 
+        borderBottom: "1px solid var(--border-subtle)", 
+        background: "rgba(10, 10, 11, 0.6)",
+        backdropFilter: "blur(16px)",
+        WebkitBackdropFilter: "blur(16px)"
+      }}>
       <div className="flex items-center gap-3">
         <img src="/logo.jpg" alt="EditNest"
           className="w-14 h-14 rounded-xl object-cover" />
