@@ -2,7 +2,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from PIL import Image
 import io
 import re
@@ -27,10 +27,16 @@ from auth import (
 
 app = FastAPI(title="EditNest API", version="1.0.0")
 
-CACHE_DIR = "cache"
+CACHE_DIR = os.environ.get("CACHE_DIR", "cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
-SECRET_API_KEY = os.environ.get("API_KEY", "editnest-automation-key-123")
+DEFAULT_SECRET_API_KEY = "editnest-automation-key-123"
+SECRET_API_KEY = os.environ.get("API_KEY")
+
+if not SECRET_API_KEY and not os.environ.get("PORT"):
+    SECRET_API_KEY = DEFAULT_SECRET_API_KEY
+elif not SECRET_API_KEY:
+    print("WARNING: API_KEY is not set. X-API-Key automation access is disabled.")
 
 create_tables()
 # Pre-download the rembg model on startup
@@ -40,22 +46,34 @@ print("Pre-loading AI model (lightweight version)...")
 model_session = new_session("u2netp")
 print("AI model loaded!")
 
+
+def get_allowed_origins():
+    origins = ["http://localhost:5173", "http://localhost:3000"]
+
+    frontend_url = os.environ.get("FRONTEND_URL", "").strip()
+    if frontend_url:
+        origins.append(frontend_url)
+
+    extra_origins = os.environ.get("CORS_ALLOWED_ORIGINS", "")
+    origins.extend(origin.strip() for origin in extra_origins.split(",") if origin.strip())
+
+    # Preserve order while removing duplicates.
+    return list(dict.fromkeys(origins))
+
+
+cors_allow_origin_regex = os.environ.get("CORS_ALLOW_ORIGIN_REGEX")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "https://editnest-production.up.railway.app",
-        "https://glistening-serenity-production.up.railway.app",
-        "https://editnest-theta.vercel.app",
-    ],
+    allow_origins=get_allowed_origins(),
+    allow_origin_regex=cors_allow_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp", "image/jpg"}
-MAX_FILE_SIZE = 5 * 1024 * 1024
+MAX_FILE_SIZE = int(os.environ.get("MAX_FILE_SIZE_MB", "5")) * 1024 * 1024
 
 # Ensure we only process one image at a time to prevent RAM crashes
 processing_semaphore = asyncio.Semaphore(1)
@@ -124,7 +142,7 @@ async def remove_background(
     db: Session = Depends(get_db)
 ):
     # Allow machine-to-machine automation via API Key
-    is_machine = x_api_key == SECRET_API_KEY
+    is_machine = bool(SECRET_API_KEY) and x_api_key == SECRET_API_KEY
     
     if not is_machine:
         # Fallback to human JWT Authentication
