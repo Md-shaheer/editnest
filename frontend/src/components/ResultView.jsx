@@ -15,6 +15,10 @@ export default function ResultView({ originalFile, resultBlob, originalUrl, resu
     };
   }, []);
 
+  useEffect(() => {
+    setBgColor("transparent");
+  }, [resultUrl]);
+
   const formatSize = (bytes) => {
     if (!bytes) return "";
     const kb = bytes / 1024;
@@ -250,9 +254,33 @@ function ImagePanel({ label, url, showChecker, accent, tall, bgColor = "transpar
         background: "var(--bg-surface)"
       }}
     >
-      <div className="px-4 py-2.5 flex items-center" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-        <span className="text-xs font-medium" style={{ color: accent ? "var(--accent)" : "var(--text-secondary)" }}>
-          {accent && <span className="mr-1.5">*</span>}
+      <div
+        className="px-4 py-3 flex items-center"
+        style={{
+          borderBottom: "1px solid var(--border-subtle)",
+          background: accent
+            ? "linear-gradient(90deg, rgba(245,200,0,0.12), rgba(245,200,0,0.03) 40%, transparent 85%)"
+            : "transparent"
+        }}
+      >
+        <span
+          className="inline-flex items-center gap-2 text-xs font-semibold tracking-[0.16em] uppercase px-3 py-1.5 rounded-full"
+          style={{
+            color: accent ? "#ffe082" : "var(--text-secondary)",
+            background: accent ? "rgba(245, 200, 0, 0.08)" : "rgba(255,255,255,0.03)",
+            border: accent ? "1px solid rgba(245, 200, 0, 0.24)" : "1px solid var(--border-subtle)",
+            boxShadow: accent ? "0 10px 30px rgba(245, 200, 0, 0.08)" : "none"
+          }}
+        >
+          {accent && (
+            <span
+              className="inline-block w-2 h-2 rounded-full"
+              style={{
+                background: "linear-gradient(180deg, #ffe082 0%, var(--accent) 100%)",
+                boxShadow: "0 0 12px rgba(245, 200, 0, 0.5)"
+              }}
+            />
+          )}
           {label}
         </span>
       </div>

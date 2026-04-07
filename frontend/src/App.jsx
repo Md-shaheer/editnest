@@ -227,13 +227,59 @@ export default function App() {
     trackedResultRef.current = false;
   }, [originalUrl, resultUrl]);
 
-  const handleDownload = useCallback(() => {
+  const handleDownload = useCallback(async (bgColor = "transparent") => {
     if (!resultUrl) return;
-    const link = document.createElement("a");
+
     const fileName = originalFile?.name?.replace(/\.[^.]+$/, "") || "image";
-    link.href = resultUrl;
-    link.download = `${fileName}_nobg.png`;
-    link.click();
+
+    const triggerDownload = (href) => {
+      const link = document.createElement("a");
+      link.href = href;
+      link.download = `${fileName}_${bgColor === "transparent" ? "nobg" : "bg"}.png`;
+      link.click();
+    };
+
+    if (bgColor === "transparent") {
+      triggerDownload(resultUrl);
+      return;
+    }
+
+    try {
+      const composedBlob = await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          canvas.width = img.naturalWidth || img.width;
+          canvas.height = img.naturalHeight || img.height;
+          const ctx = canvas.getContext("2d");
+
+          if (!ctx) {
+            reject(new Error("Canvas export is not supported in this browser."));
+            return;
+          }
+
+          ctx.fillStyle = bgColor;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          canvas.toBlob((blob) => {
+            if (!blob) {
+              reject(new Error("Failed to prepare the colored PNG."));
+              return;
+            }
+            resolve(blob);
+          }, "image/png");
+        };
+        img.onerror = () => reject(new Error("Failed to prepare the image for download."));
+        img.src = resultUrl;
+      });
+
+      const downloadUrl = URL.createObjectURL(composedBlob);
+      triggerDownload(downloadUrl);
+      setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+    } catch (err) {
+      setErrorMsg(err.message || "Failed to download image.");
+    }
   }, [originalFile, resultUrl]);
 
   if (!authChecked) {
