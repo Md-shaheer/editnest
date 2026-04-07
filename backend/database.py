@@ -1,6 +1,6 @@
 import os
 
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, create_engine, func
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, create_engine, func, inspect, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 DEFAULT_DATABASE_URL = "sqlite:///./editnest.db"
@@ -32,6 +32,7 @@ class User(Base):
     email = Column(String, unique=True, index=True)
     username = Column(String, unique=True, index=True)
     hashed_password = Column(String)
+    auth_provider = Column(String, nullable=True, index=True)
     is_active = Column(Boolean, default=True)
 
 
@@ -60,3 +61,16 @@ def get_db():
 
 def create_tables():
     Base.metadata.create_all(bind=engine)
+    ensure_user_columns()
+
+
+def ensure_user_columns():
+    inspector = inspect(engine)
+    if "users" not in inspector.get_table_names():
+        return
+
+    column_names = {column["name"] for column in inspector.get_columns("users")}
+
+    if "auth_provider" not in column_names:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE users ADD COLUMN auth_provider VARCHAR"))

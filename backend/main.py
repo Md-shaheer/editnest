@@ -12,6 +12,7 @@ import os
 import gc
 import asyncio
 import json
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Optional
 
@@ -25,13 +26,16 @@ os.environ["NUMEXPR_NUM_THREADS"] = "1"
 from database import ActivityEvent, get_db, create_tables
 from auth import (
     create_user, authenticate_user, create_access_token,
-    get_user_by_email, get_user_by_username, decode_token
+    get_user_by_email, get_user_by_username, decode_token, update_auth_provider, verify_password
 )
 
 app = FastAPI(title="EditNest API", version="1.0.1")
 
 CACHE_DIR = os.environ.get("CACHE_DIR", "cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
+CACHE_TTL_SECONDS = max(1, int(os.environ.get("CACHE_TTL_HOURS", "24"))) * 60 * 60
+CACHE_CLEANUP_INTERVAL_SECONDS = max(300, int(os.environ.get("CACHE_CLEANUP_INTERVAL_MINUTES", "60"))) * 60
+last_cache_cleanup_at = 0.0
 
 DEFAULT_SECRET_API_KEY = "editnest-automation-key-123"
 SECRET_API_KEY = os.environ.get("API_KEY")
@@ -48,6 +52,43 @@ from rembg import new_session, remove
 print("Pre-loading AI model (lightweight version)...")
 model_session = new_session("u2netp")
 print("AI model loaded!")
+
+
+def cleanup_expired_cache(force: bool = False):
+    global last_cache_cleanup_at
+
+    now = time.time()
+    if not force and (now - last_cache_cleanup_at) < CACHE_CLEANUP_INTERVAL_SECONDS:
+        return
+
+    removed_files = 0
+
+    try:
+        for entry in os.scandir(CACHE_DIR):
+            if not entry.is_file():
+                continue
+
+            try:
+                file_age = now - entry.stat().st_mtime
+                if file_age > CACHE_TTL_SECONDS:
+                    os.remove(entry.path)
+                    removed_files += 1
+            except FileNotFoundError:
+                continue
+            except Exception as exc:
+                print(f"WARNING: failed to inspect/delete cache file {entry.path}: {exc}")
+    except FileNotFoundError:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+    except Exception as exc:
+        print(f"WARNING: cache cleanup failed: {exc}")
+    finally:
+        last_cache_cleanup_at = now
+
+    if removed_files:
+        print(f"Cache cleanup removed {removed_files} expired file(s).")
+
+
+cleanup_expired_cache(force=True)
 
 
 def get_allowed_origins():
@@ -92,9 +133,10 @@ class LoginRequest(BaseModel):
     email: str
     password: str
 
-class GoogleAuthRequest(BaseModel):
+class FirebaseAuthRequest(BaseModel):
     id_token: str
     username: Optional[str] = None
+    provider: str = "google"
 
 class GenerateBgRequest(BaseModel):
     prompt: str
@@ -115,6 +157,11 @@ ALLOWED_CLIENT_EVENTS = {
     "logout",
     "result_view",
     "upload_cancelled",
+}
+
+SUPPORTED_AUTH_PROVIDERS = {
+    "google": "Google",
+    "apple": "Apple",
 }
 
 
@@ -228,6 +275,10 @@ def build_unique_username(db: Session, preferred_username: Optional[str], email:
 
     return candidate
 
+
+def get_provider_label(auth_provider: Optional[str]) -> str:
+    return SUPPORTED_AUTH_PROVIDERS.get(auth_provider or "", "Social")
+
 # --- Auth Routes ---
 @app.post("/auth/signup")
 def signup(
@@ -237,6 +288,7 @@ def signup(
     db: Session = Depends(get_db)
 ):
     if get_user_by_email(db, data.email):
+        existing_user = get_user_by_email(db, data.email)
         safe_log_activity(
             db,
             "signup_failed",
@@ -245,6 +297,9 @@ def signup(
             session_id=x_session_id,
             details={"reason": "email_exists", "username": data.username},
         )
+        if existing_user and existing_user.auth_provider in SUPPORTED_AUTH_PROVIDERS:
+            provider_label = get_provider_label(existing_user.auth_provider)
+            raise HTTPException(status_code=400, detail=f"Use {provider_label} login for this account")
         raise HTTPException(status_code=400, detail="Email already registered")
     if get_user_by_username(db, data.username):
         safe_log_activity(
@@ -289,7 +344,7 @@ def google_auth(
         from google.auth.transport import requests as google_requests
         from google.oauth2 import id_token as google_id_token
     except ImportError:
-        raise HTTPException(status_code=500, detail="Google authentication is not configured on the server")
+        raise HTTPException(status_code=500, detail="Social authentication is not configured on the server")
 
     try:
         token_payload = google_id_token.verify_firebase_token(
@@ -305,6 +360,10 @@ def google_auth(
             details={"reason": "invalid_google_token"},
         )
         raise HTTPException(status_code=401, detail="Google authentication failed")
+
+    provider = (data.provider or "google").strip().lower()
+    if provider not in SUPPORTED_AUTH_PROVIDERS:
+        raise HTTPException(status_code=400, detail="Unsupported social login provider")
 
     email = token_payload.get("email")
     email_verified = token_payload.get("email_verified")
@@ -327,20 +386,22 @@ def google_auth(
             token_payload.get("name") or data.username,
             email,
         )
-        generated_password = f"google:{token_payload.get('user_id') or token_payload.get('sub') or email}"
-        user = create_user(db, email, username, generated_password)
+        generated_password = f"{provider}:{token_payload.get('user_id') or token_payload.get('sub') or email}"
+        user = create_user(db, email, username, generated_password, auth_provider=provider)
         safe_log_activity(
             db,
-            "google_signup_success",
+            f"{provider}_signup_success",
             request=request,
             user=user,
             session_id=x_session_id,
             details={"username": user.username},
         )
+    elif not user.auth_provider:
+        user = update_auth_provider(db, user, provider)
 
     safe_log_activity(
         db,
-        "google_login_success",
+        f"{provider}_login_success",
         request=request,
         user=user,
         session_id=x_session_id,
@@ -361,6 +422,30 @@ def login(
     x_session_id: str = Header(None),
     db: Session = Depends(get_db)
 ):
+    existing_user = get_user_by_email(db, data.email)
+    if not existing_user:
+        safe_log_activity(
+            db,
+            "login_failed",
+            request=request,
+            email=data.email,
+            session_id=x_session_id,
+            details={"reason": "invalid_credentials"},
+        )
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    if existing_user.auth_provider in SUPPORTED_AUTH_PROVIDERS and not verify_password(data.password, existing_user.hashed_password):
+        provider_label = get_provider_label(existing_user.auth_provider)
+        safe_log_activity(
+            db,
+            "login_failed",
+            request=request,
+            email=data.email,
+            session_id=x_session_id,
+            details={"reason": f"use_{existing_user.auth_provider}_login"},
+        )
+        raise HTTPException(status_code=401, detail=f"Use {provider_label} login for this account")
+
     user = authenticate_user(db, data.email, data.password)
     if not user:
         safe_log_activity(
@@ -527,6 +612,8 @@ async def remove_background(
     x_session_id: str = Header(None),
     db: Session = Depends(get_db)
 ):
+    cleanup_expired_cache()
+
     # Allow machine-to-machine automation via API Key
     is_machine = bool(SECRET_API_KEY) and x_api_key == SECRET_API_KEY
     user = None

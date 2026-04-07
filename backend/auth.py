@@ -43,9 +43,17 @@ def get_user_by_email(db: Session, email: str):
 def get_user_by_username(db: Session, username: str):
     return db.query(User).filter(User.username == username).first()
 
-def create_user(db: Session, email: str, username: str, password: str):
+def create_user(db: Session, email: str, username: str, password: str, auth_provider: str = "local"):
     hashed = get_password_hash(password)
-    user = User(email=email, username=username, hashed_password=hashed)
+    user = User(email=email, username=username, hashed_password=hashed, auth_provider=auth_provider)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def update_auth_provider(db: Session, user: User, auth_provider: str):
+    user.auth_provider = auth_provider
     db.add(user)
     db.commit()
     db.refresh(user)

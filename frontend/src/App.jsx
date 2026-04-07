@@ -374,6 +374,16 @@ export default function App() {
                 </p>
               </div>
               <UploadZone onFile={handleFile} />
+              <div
+                className="mt-5 mx-auto max-w-xl rounded-2xl px-4 py-3 text-sm text-center"
+                style={{
+                  background: "rgba(255,255,255,0.03)",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  color: "var(--text-secondary)"
+                }}
+              >
+                Privacy note: Uploaded images are processed temporarily for background removal. Original uploads are not permanently stored, and cached processed files are cleared automatically.
+              </div>
             </div>
           ) : null}
 
