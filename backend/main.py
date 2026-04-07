@@ -92,6 +92,10 @@ class LoginRequest(BaseModel):
     email: str
     password: str
 
+class GoogleAuthRequest(BaseModel):
+    id_token: str
+    username: Optional[str] = None
+
 class GenerateBgRequest(BaseModel):
     prompt: str
     image_base64: str
@@ -208,12 +212,27 @@ def serialize_activity(activity: ActivityEvent):
         "created_at": activity.created_at.isoformat() if activity.created_at else None,
     }
 
+
+def build_unique_username(db: Session, preferred_username: Optional[str], email: str) -> str:
+    source_value = preferred_username or email.split("@")[0]
+    cleaned_value = re.sub(r"[^A-Za-z0-9_]", "", source_value).lower()
+    base_username = cleaned_value[:20] or "editnestuser"
+
+    candidate = base_username
+    counter = 1
+
+    while get_user_by_username(db, candidate):
+        counter += 1
+        suffix = str(counter)
+        candidate = f"{base_username[: max(1, 20 - len(suffix))]}{suffix}"
+
+    return candidate
+
 # --- Auth Routes ---
 @app.post("/auth/signup")
 def signup(
     data: SignupRequest,
     request: Request,
-    authorization: str = Header(None),
     x_session_id: str = Header(None),
     db: Session = Depends(get_db)
 ):
@@ -245,6 +264,83 @@ def signup(
     safe_log_activity(
         db,
         "signup_success",
+        request=request,
+        user=user,
+        session_id=x_session_id,
+        details={"username": user.username},
+    )
+    token = create_access_token({"sub": user.email})
+    return {
+        "token": token,
+        "username": user.username,
+        "email": user.email,
+        "is_admin": is_admin_email(user.email),
+    }
+
+
+@app.post("/auth/google")
+def google_auth(
+    data: GoogleAuthRequest,
+    request: Request,
+    x_session_id: str = Header(None),
+    db: Session = Depends(get_db)
+):
+    try:
+        from google.auth.transport import requests as google_requests
+        from google.oauth2 import id_token as google_id_token
+    except ImportError:
+        raise HTTPException(status_code=500, detail="Google authentication is not configured on the server")
+
+    try:
+        token_payload = google_id_token.verify_firebase_token(
+            data.id_token,
+            google_requests.Request(),
+        )
+    except Exception:
+        safe_log_activity(
+            db,
+            "google_login_failed",
+            request=request,
+            session_id=x_session_id,
+            details={"reason": "invalid_google_token"},
+        )
+        raise HTTPException(status_code=401, detail="Google authentication failed")
+
+    email = token_payload.get("email")
+    email_verified = token_payload.get("email_verified")
+
+    if not email or not email_verified:
+        safe_log_activity(
+            db,
+            "google_login_failed",
+            request=request,
+            email=email,
+            session_id=x_session_id,
+            details={"reason": "email_not_verified"},
+        )
+        raise HTTPException(status_code=401, detail="Google account email is not verified")
+
+    user = get_user_by_email(db, email)
+    if not user:
+        username = build_unique_username(
+            db,
+            token_payload.get("name") or data.username,
+            email,
+        )
+        generated_password = f"google:{token_payload.get('user_id') or token_payload.get('sub') or email}"
+        user = create_user(db, email, username, generated_password)
+        safe_log_activity(
+            db,
+            "google_signup_success",
+            request=request,
+            user=user,
+            session_id=x_session_id,
+            details={"username": user.username},
+        )
+
+    safe_log_activity(
+        db,
+        "google_login_success",
         request=request,
         user=user,
         session_id=x_session_id,

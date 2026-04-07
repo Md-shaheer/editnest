@@ -43,46 +43,64 @@ export default function AuthPage({ onLogin }) {
     onLogin(data);
   };
 
+  const toFriendlyError = (message, nextMode = mode) => {
+    if (!message) {
+      return nextMode === "login" ? "Login failed" : "Signup failed";
+    }
+
+    if (message === "Email already registered") {
+      setMode("login");
+      return "This email already has an account. Please login instead.";
+    }
+
+    if (message === "Username already taken") {
+      return "This username is already taken. Try another one.";
+    }
+
+    if (message === "Invalid email or password") {
+      return "Wrong email or password.";
+    }
+
+    if (message === "Google authentication failed") {
+      return "Google login failed. Please try again.";
+    }
+
+    return message;
+  };
+
   const handleGoogle = async () => {
     setError("");
     setGoogleLoading(true);
 
     try {
       const googleUser = await signInWithGoogle();
-      const googleEmail = googleUser.email;
-      const googleUsername = googleUser.displayName || googleEmail.split("@")[0];
-      const googlePassword = googleUser.uid;
-      const headers = {
-        "Content-Type": "application/json",
-        "X-Session-Id": getSessionId(),
-      };
-
-      let response = await fetch(`${API_URL}/auth/login`, {
+      const idToken = await googleUser.getIdToken();
+      const response = await fetch(`${API_URL}/auth/google`, {
         method: "POST",
-        headers,
-        body: JSON.stringify({ email: googleEmail, password: googlePassword }),
+        headers: {
+          "Content-Type": "application/json",
+          "X-Session-Id": getSessionId(),
+        },
+        body: JSON.stringify({
+          id_token: idToken,
+          username: googleUser.displayName || googleUser.email?.split("@")[0] || "",
+        }),
       });
-
-      if (!response.ok) {
-        response = await fetch(`${API_URL}/auth/signup`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            email: googleEmail,
-            username: googleUsername,
-            password: googlePassword,
-          }),
-        });
-      }
 
       const data = await response.json();
       if (!response.ok) {
-        throw new Error(data.detail || "Google authentication failed");
+        throw new Error(toFriendlyError(data.detail || "Google authentication failed"));
       }
 
       persistAuth(data);
     } catch (err) {
-      setError(err.message || "Google authentication failed");
+      if (err?.code === "auth/popup-closed-by-user") {
+        setError("Google popup closed before login completed.");
+      } else if (err?.code === "auth/unauthorized-domain") {
+        setError("This website domain is not allowed in Firebase Google login.");
+      } else {
+        setError(toFriendlyError(err.message || "Google authentication failed"));
+      }
     } finally {
       setGoogleLoading(false);
     }
@@ -119,12 +137,12 @@ export default function AuthPage({ onLogin }) {
 
       const data = await response.json();
       if (!response.ok) {
-        throw new Error(data.detail || "Something went wrong");
+        throw new Error(toFriendlyError(data.detail || "Something went wrong", mode));
       }
 
       persistAuth(data);
     } catch (err) {
-      setError(err.message || "Authentication failed");
+      setError(toFriendlyError(err.message || "Authentication failed", mode));
     } finally {
       setFormLoading(false);
     }
