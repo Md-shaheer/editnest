@@ -48,6 +48,10 @@ export default function AuthPage({ onLogin }) {
       return nextMode === "login" ? "Login failed" : "Signup failed";
     }
 
+    if (message === "Not Found") {
+      return "Google login backend is still updating. Please redeploy Railway and try again.";
+    }
+
     if (message === "Email already registered") {
       setMode("login");
       return "This email already has an account. Please login instead.";
@@ -211,6 +215,24 @@ export default function AuthPage({ onLogin }) {
             className="w-full py-3 rounded-xl text-sm font-medium mb-4 flex items-center justify-center gap-3 transition-all hover:opacity-90 disabled:opacity-70 disabled:cursor-not-allowed"
             style={{ background: "white", color: "#1a1a1a", border: "1px solid #e0e0e0" }}
           >
+            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M21.8 12.23c0-.77-.07-1.5-.2-2.2H12v4.16h5.49a4.7 4.7 0 0 1-2.04 3.08v2.56h3.3c1.93-1.78 3.05-4.4 3.05-7.6Z"
+                fill="#4285F4"
+              />
+              <path
+                d="M12 22c2.76 0 5.08-.91 6.77-2.47l-3.3-2.56c-.91.61-2.08.97-3.47.97-2.67 0-4.93-1.8-5.73-4.22H2.86v2.64A10 10 0 0 0 12 22Z"
+                fill="#34A853"
+              />
+              <path
+                d="M6.27 13.72A5.98 5.98 0 0 1 5.95 12c0-.6.11-1.18.31-1.72V7.64H2.86A10 10 0 0 0 2 12c0 1.6.38 3.11 1.06 4.36l3.21-2.64Z"
+                fill="#FBBC05"
+              />
+              <path
+                d="M12 6.06c1.5 0 2.84.52 3.9 1.53l2.92-2.92C17.07 3.03 14.76 2 12 2A10 10 0 0 0 2.86 7.64l3.4 2.64C7.07 7.86 9.33 6.06 12 6.06Z"
+                fill="#EA4335"
+              />
+            </svg>
             {googleLoading ? "Connecting..." : "Continue with Google"}
           </button>
 
