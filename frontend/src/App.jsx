@@ -11,7 +11,6 @@ import { getSessionId, trackClientEvent } from "./analytics";
 export default function App() {
   const [user, setUser] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
-  const [showAuth, setShowAuth] = useState(false);
   const [showActivity, setShowActivity] = useState(false);
   const [phase, setPhase] = useState("idle");
   const [originalFile, setOriginalFile] = useState(null);
@@ -76,7 +75,6 @@ export default function App() {
       email: data.email,
       isAdmin: !!data.is_admin,
     });
-    setShowAuth(false);
   }, []);
 
   const handleLogout = useCallback(() => {
@@ -90,7 +88,6 @@ export default function App() {
     localStorage.removeItem("email");
     localStorage.removeItem("is_admin");
     setUser(null);
-    setShowAuth(false);
     setShowActivity(false);
     setPhase("idle");
   }, [phase, showActivity]);
@@ -156,17 +153,13 @@ export default function App() {
       const formData = new FormData();
       formData.append("file", file);
       const token = localStorage.getItem("token");
-      const headers = {
-        "X-Session-Id": getSessionId(),
-      };
-
-      if (token) {
-        headers.Authorization = `Bearer ${token}`;
-      }
 
       const response = await fetch(`${API_URL}/remove-bg`, {
         method: "POST",
-        headers,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-Session-Id": getSessionId(),
+        },
         signal: abortControllerRef.current.signal,
         body: formData,
       });
@@ -299,25 +292,8 @@ export default function App() {
     );
   }
 
-  if (!user && showAuth) {
-    return (
-      <div className="relative">
-        <button
-          onClick={() => setShowAuth(false)}
-          className="fixed top-6 left-6 z-50 px-4 py-2 rounded-lg text-xs font-medium transition-all hover:opacity-80"
-          style={{
-            background: "rgba(10, 10, 11, 0.75)",
-            border: "1px solid rgba(255,255,255,0.08)",
-            color: "var(--text-secondary)",
-            backdropFilter: "blur(16px)",
-            WebkitBackdropFilter: "blur(16px)",
-          }}
-        >
-          Continue without login
-        </button>
-        <AuthPage onLogin={handleLogin} />
-      </div>
-    );
+  if (!user) {
+    return <AuthPage onLogin={handleLogin} />;
   }
 
   return (
@@ -366,7 +342,6 @@ export default function App() {
           user={user}
           onLogout={handleLogout}
           onOpenActivity={() => setShowActivity((current) => !current)}
-          onOpenAuth={() => setShowAuth(true)}
           showActivity={showActivity}
         />
 
@@ -395,7 +370,7 @@ export default function App() {
                   <span style={{ color: "var(--text-primary)" }}> Background Remover</span>
                 </h2>
                 <p className="text-lg max-w-xl mx-auto" style={{ color: "var(--text-secondary)", lineHeight: "1.6" }}>
-                  Welcome, <span style={{ color: "#f5c800", fontWeight: "500" }}>{user?.username || "guest"}</span>! Upload a photo and let our AI seamlessly remove the background in seconds.
+                  Welcome, <span style={{ color: "#f5c800", fontWeight: "500" }}>{user.username}</span>! Upload a photo and let our AI seamlessly remove the background in seconds.
                 </p>
               </div>
               <UploadZone onFile={handleFile} />
@@ -405,14 +380,6 @@ export default function App() {
               >
                 Privacy note: Uploaded images are processed temporarily for background removal and are cleared automatically.
               </p>
-              {!user && (
-                <p
-                  className="mt-2 text-center text-xs md:text-sm"
-                  style={{ color: "var(--text-secondary)" }}
-                >
-                  Login is optional. You can use the remover directly, or sign in later if you want a personal account.
-                </p>
-              )}
             </div>
           ) : null}
 

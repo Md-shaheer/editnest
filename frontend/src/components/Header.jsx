@@ -1,4 +1,4 @@
-export default function Header({ user, onLogout, onOpenActivity, onOpenAuth, showActivity }) {
+export default function Header({ user, onLogout, onOpenActivity, showActivity }) {
   return (
     <header
       className="w-full px-6 py-4 flex items-center justify-between sticky top-0 z-50"
@@ -50,20 +50,6 @@ export default function Header({ user, onLogout, onOpenActivity, onOpenAuth, sho
               Logout
             </button>
           </>
-        )}
-
-        {!user && (
-          <button
-            onClick={onOpenAuth}
-            className="px-4 py-2 rounded-lg text-xs font-medium transition-all hover:opacity-80"
-            style={{
-              background: "var(--bg-elevated)",
-              border: "1px solid var(--border)",
-              color: "var(--text-secondary)",
-            }}
-          >
-            Login / Sign Up
-          </button>
         )}
       </div>
     </header>

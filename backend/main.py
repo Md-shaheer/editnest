@@ -618,11 +618,16 @@ async def remove_background(
     is_machine = bool(SECRET_API_KEY) and x_api_key == SECRET_API_KEY
     user = None
 
-    if not is_machine and authorization and authorization.startswith("Bearer "):
+    if not is_machine:
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Please login or provide a valid X-API-Key")
         token = authorization.split(" ")[1]
         email = decode_token(token)
-        if email:
-            user = get_user_by_email(db, email)
+        if not email:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        user = get_user_by_email(db, email)
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
 
     if file.content_type not in ALLOWED_TYPES:
         raise HTTPException(status_code=400, detail=f"Unsupported file type")
