@@ -29,7 +29,7 @@ from auth import (
     get_user_by_email, get_user_by_username, decode_token, update_auth_provider, verify_password
 )
 
-app = FastAPI(title="EditNest API", version="1.0.1")
+app = FastAPI(title="EditNest API", version="1.0.2")
 
 CACHE_DIR = os.environ.get("CACHE_DIR", "cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
