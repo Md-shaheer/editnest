@@ -335,7 +335,7 @@ def signup(
 
 @app.post("/auth/google")
 def google_auth(
-    data: GoogleAuthRequest,
+    data: FirebaseAuthRequest,
     request: Request,
     x_session_id: str = Header(None),
     db: Session = Depends(get_db)
