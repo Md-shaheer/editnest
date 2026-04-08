@@ -133,10 +133,13 @@ class LoginRequest(BaseModel):
     email: str
     password: str
 
-class FirebaseAuthRequest(BaseModel):
+class GoogleAuthRequest(BaseModel):
     id_token: str
     username: Optional[str] = None
     provider: str = "google"
+
+
+FirebaseAuthRequest = GoogleAuthRequest
 
 class GenerateBgRequest(BaseModel):
     prompt: str
