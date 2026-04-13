@@ -12,6 +12,12 @@
   - `CORS_ALLOWED_ORIGINS`
   - `CORS_ALLOW_ORIGIN_REGEX`
   - `REPLICATE_API_TOKEN`
+- For the real frontend domain use:
+
+```text
+FRONTEND_URL=https://editnest.in
+CORS_ALLOWED_ORIGINS=https://www.editnest.in
+```
 
 ### Important database rule
 
@@ -36,12 +42,12 @@ https://glistening-serenity-production.up.railway.app/health
 ## 2. Custom domain
 
 - Frontend custom domain belongs on Vercel, not on the Railway backend apex.
-- `editnest.com` and `www.editnest.com` should point to the Vercel project.
+- `editnest.in` and `www.editnest.in` should point to the Vercel project.
 - Current Vercel guidance for this project is:
 
 ```text
-A editnest.com 76.76.21.21
-A www.editnest.com 76.76.21.21
+A @ 76.76.21.21
+CNAME www cname.vercel-dns.com
 ```
 
 - The domain is still on `ns1.afternic.com` / `ns2.afternic.com`, so update the DNS records there or switch the nameservers to Vercel.
@@ -51,11 +57,11 @@ A www.editnest.com 76.76.21.21
 https://glistening-serenity-production.up.railway.app/health
 ```
 
-- If you later want a custom backend hostname, use a subdomain like `api.editnest.com`, not the apex domain.
+- If you later want a custom backend hostname, use a subdomain like `api.editnest.in`, not the apex domain.
 - After DNS propagation, re-test the frontend:
 
 ```text
-https://editnest.com
+https://editnest.in
 ```
 
 ## 3. Vercel frontend
@@ -63,7 +69,7 @@ https://editnest.com
 - Set:
 
 ```text
-VITE_API_URL=https://glistening-serenity-production.up.railway.app
+VITE_API_URL=/api
 VITE_FIREBASE_API_KEY=...
 VITE_FIREBASE_AUTH_DOMAIN=editnest-6d68e.firebaseapp.com
 VITE_FIREBASE_PROJECT_ID=editnest-6d68e
@@ -73,19 +79,15 @@ VITE_FIREBASE_APP_ID=1:276474642646:web:eb0e934b5048cfbb81c977
 VITE_FIREBASE_MEASUREMENT_ID=G-2QRH5W5HJN
 ```
 
-- Once the frontend custom domain is confirmed live, switch only the frontend origin if you intentionally move the API too:
+- Keep `vercel.json` rewriting `/api/*` to Railway. That lets `https://editnest.in` call the API without exposing the Railway hostname in the browser.
+- Only change `VITE_API_URL` away from `/api` if you later move the API behind your own custom API hostname such as `https://api.editnest.in`.
 
-```text
-VITE_API_URL=https://editnest.com
-```
-
-- In the current setup, keep `VITE_API_URL` on the Railway backend URL.
 - Redeploy the Vercel project after each env change or new production push.
 
 ### CLI commands
 
 ```powershell
-vercel env add VITE_API_URL production --value "https://glistening-serenity-production.up.railway.app" --yes
-vercel env add VITE_API_URL preview --value "https://glistening-serenity-production.up.railway.app" --yes
-vercel env add VITE_API_URL development --value "https://glistening-serenity-production.up.railway.app" --yes
+vercel env add VITE_API_URL production --value "/api" --yes
+vercel env add VITE_API_URL preview --value "/api" --yes
+vercel env add VITE_API_URL development --value "/api" --yes
 ```

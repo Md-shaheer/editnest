@@ -30,8 +30,13 @@ function formatDateTime(value) {
 
   try {
     return new Intl.DateTimeFormat("en-IN", {
-      dateStyle: "medium",
-      timeStyle: "short",
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      timeZoneName: "short",
     }).format(new Date(value));
   } catch {
     return value;
@@ -42,6 +47,23 @@ function formatDetails(details) {
   if (!details) return "-";
   const text = JSON.stringify(details);
   return text.length > 120 ? `${text.slice(0, 117)}...` : text;
+}
+
+function formatDuration(totalSeconds) {
+  const seconds = Number(totalSeconds || 0);
+  if (!Number.isFinite(seconds) || seconds <= 0) return "0s";
+
+  if (seconds < 60) return `${seconds}s`;
+
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes < 60) {
+    return remainingSeconds ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
 }
 
 export default function ActivityDashboard({ user, onClose, onError }) {
@@ -88,16 +110,18 @@ export default function ActivityDashboard({ user, onClose, onError }) {
     visitors: 0,
     logged_in_users: 0,
     uploads: 0,
+    active_sessions: 0,
+    avg_session_seconds: 0,
   };
 
   const topActions = useMemo(() => summary?.action_counts?.slice(0, 6) || [], [summary]);
-  const recentUsers = useMemo(() => summary?.recent_users || [], [summary]);
+  const recentSessions = useMemo(() => summary?.recent_sessions || [], [summary]);
 
   return (
     <section className="w-full max-w-7xl">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-8">
         <div>
-          <p className="text-xs uppercase tracking-[0.2em]" style={{ color: "#f5c800" }}>
+          <p className="text-xs uppercase tracking-[0.2em]" style={{ color: "#3b82f6" }}>
             Admin View
           </p>
           <h2
@@ -127,8 +151,9 @@ export default function ActivityDashboard({ user, onClose, onError }) {
             onClick={onClose}
             className="px-4 py-2 rounded-xl text-sm font-medium transition-all hover:opacity-80"
             style={{
-              background: "#f5c800",
-              color: "#0a0a0b",
+              background: "#3b82f6",
+              color: "#ffffff",
+              boxShadow: "0 0 15px rgba(59, 130, 246, 0.4)",
             }}
           >
             Back
@@ -136,9 +161,11 @@ export default function ActivityDashboard({ user, onClose, onError }) {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
         <StatCard label="Total Events" value={totals.events} hint="All tracked actions" />
         <StatCard label="Visitors" value={totals.visitors} hint="Unique browser sessions" />
+        <StatCard label="Active Now" value={totals.active_sessions} hint="Sessions still active" />
+        <StatCard label="Avg Stay" value={formatDuration(totals.avg_session_seconds)} hint="Average session duration" />
         <StatCard label="Logged-in Users" value={totals.logged_in_users} hint="Users with email" />
         <StatCard label="Uploads" value={totals.uploads} hint="Completed background removals" />
       </div>
@@ -196,9 +223,9 @@ export default function ActivityDashboard({ user, onClose, onError }) {
                         <span
                           className="inline-flex rounded-full px-2.5 py-1 text-xs font-medium"
                           style={{
-                            background: "rgba(245, 200, 0, 0.14)",
-                            color: "#f5c800",
-                            border: "1px solid rgba(245, 200, 0, 0.2)",
+                            background: "rgba(59, 130, 246, 0.14)",
+                            color: "#3b82f6",
+                            border: "1px solid rgba(59, 130, 246, 0.2)",
                           }}
                         >
                           {event.event}
@@ -234,7 +261,7 @@ export default function ActivityDashboard({ user, onClose, onError }) {
                 topActions.map((item) => (
                   <div key={item.event} className="flex items-center justify-between gap-4">
                     <span style={{ color: "var(--text-secondary)" }}>{item.event}</span>
-                    <span style={{ color: "#f5c800", fontWeight: 600 }}>{item.count}</span>
+                    <span style={{ color: "#3b82f6", fontWeight: 600 }}>{item.count}</span>
                   </div>
                 ))
               )}
@@ -249,23 +276,41 @@ export default function ActivityDashboard({ user, onClose, onError }) {
             }}
           >
             <h3 className="text-lg font-semibold mb-4" style={{ color: "var(--text-primary)" }}>
-              Recent Users
+              Recent Sessions
             </h3>
 
             <div className="space-y-4">
-              {recentUsers.length === 0 ? (
-                <p style={{ color: "var(--text-secondary)" }}>No signed-in users yet.</p>
+              {recentSessions.length === 0 ? (
+                <p style={{ color: "var(--text-secondary)" }}>No session data yet.</p>
               ) : (
-                recentUsers.map((item) => (
-                  <div key={`${item.email}-${item.last_seen}`} className="rounded-2xl p-4" style={{ background: "rgba(255,255,255,0.03)" }}>
-                    <p className="text-sm font-medium break-all" style={{ color: "var(--text-primary)" }}>
-                      {item.email}
+                recentSessions.map((item) => (
+                  <div key={`${item.session_id}-${item.last_seen_at}`} className="rounded-2xl p-4" style={{ background: "rgba(255,255,255,0.03)" }}>
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="text-sm font-medium break-all" style={{ color: "var(--text-primary)" }}>
+                        {item.email || item.session_id}
+                      </p>
+                      <span
+                        className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium"
+                        style={{
+                          background: item.is_active ? "rgba(52, 211, 153, 0.14)" : "rgba(148, 163, 184, 0.12)",
+                          color: item.is_active ? "#34d399" : "#cbd5e1",
+                          border: item.is_active ? "1px solid rgba(52, 211, 153, 0.2)" : "1px solid rgba(148, 163, 184, 0.18)",
+                        }}
+                      >
+                        {item.is_active ? "Active" : "Closed"}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-xs" style={{ color: "var(--text-secondary)" }}>
+                      Page: {item.current_page || item.exit_page || item.landing_page || "-"}
                     </p>
                     <p className="mt-1 text-xs" style={{ color: "var(--text-secondary)" }}>
-                      {item.event_count} events
+                      Stay time: {formatDuration(item.duration_seconds)}
+                    </p>
+                    <p className="mt-1 text-xs" style={{ color: "var(--text-secondary)" }}>
+                      {item.total_events} events, {item.total_page_views} page views, {item.total_uploads} uploads
                     </p>
                     <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
-                      Last seen: {formatDateTime(item.last_seen)}
+                      Last seen: {formatDateTime(item.last_seen_at)}
                     </p>
                   </div>
                 ))

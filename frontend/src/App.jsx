@@ -1,30 +1,90 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import UploadZone from "./components/UploadZone";
 import ProcessingState from "./components/ProcessingState";
 import ResultView from "./components/ResultView";
+import ToolDashboard from "./components/ToolDashboard";
 import Header from "./components/Header";
 import AuthPage from "./components/AuthPage";
 import ActivityDashboard from "./components/ActivityDashboard";
 import { API_URL, REQUEST_TIMEOUT_MS } from "./api";
 import { getSessionId, trackClientEvent } from "./analytics";
+import {
+  composeImageWithBackground,
+  getBackgroundDownloadSuffix,
+  normalizeBackgroundSelection,
+} from "./utils/backgrounds";
 
 export default function App() {
   const [user, setUser] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [showActivity, setShowActivity] = useState(false);
+  const [currentView, setCurrentView] = useState("dashboard");
   const [phase, setPhase] = useState("idle");
   const [originalFile, setOriginalFile] = useState(null);
   const [originalUrl, setOriginalUrl] = useState(null);
   const [resultUrl, setResultUrl] = useState(null);
-  const [resultBlob, setResultBlob] = useState(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [progress, setProgress] = useState(0);
   const abortControllerRef = useRef(null);
   const trackedViewRef = useRef("");
   const trackedResultRef = useRef(false);
+  const sessionStartedRef = useRef(false);
+  const sessionStartedAtRef = useRef(0);
+  const activePageRef = useRef("");
+  const activePageEnteredAtRef = useRef(0);
+
+  const formatUploadError = useCallback((message) => {
+    if (!message) {
+      return "Something went wrong while removing the background.";
+    }
+
+    const normalizedMessage = String(message);
+
+    if (
+      normalizedMessage.includes("cannot identify image file") ||
+      normalizedMessage.includes("could not be read as a valid JPG, PNG, or WebP image")
+    ) {
+      return "This file could not be read properly. Please upload a valid JPG, PNG, or WebP image.";
+    }
+
+    if (normalizedMessage.toLowerCase().includes("failed to fetch")) {
+      return "Could not connect to the server. Please check that the backend is running and the API URL is correct.";
+    }
+
+    if (normalizedMessage.includes("The processed image output could not be decoded.")) {
+      return "We could not finish processing this image cleanly. Please try another photo or upload a slightly smaller version.";
+    }
+
+    if (normalizedMessage.toLowerCase().includes("timed out")) {
+      return "Processing is taking longer than expected. Please try again.";
+    }
+
+    return normalizedMessage;
+  }, []);
+
+  const getAnalyticsPage = useCallback(() => {
+    if (!user) {
+      return "auth";
+    }
+
+    if (showActivity) {
+      return "activity";
+    }
+
+    if (phase === "processing") {
+      return "processing";
+    }
+
+    if (phase === "done") {
+      return "result";
+    }
+
+    return currentView;
+  }, [currentView, phase, showActivity, user]);
 
   useEffect(() => {
     if (!errorMsg) return undefined;
+
     const timeoutId = setTimeout(() => setErrorMsg(""), 4000);
     return () => clearTimeout(timeoutId);
   }, [errorMsg]);
@@ -43,11 +103,14 @@ export default function App() {
     fetch(`${API_URL}/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
     })
-      .then(async (res) => {
-        if (!res.ok) {
-          throw new Error("Not authenticated");
+      .then(async (response) => {
+        if (!response.ok) {
+          const authError = new Error("Not authenticated");
+          authError.status = response.status;
+          throw authError;
         }
-        return res.json();
+
+        return response.json();
       })
       .then((data) => {
         setUser({
@@ -57,7 +120,16 @@ export default function App() {
           isAdmin: !!data.is_admin,
         });
       })
-      .catch(() => {
+      .catch((error) => {
+        if (error?.status >= 400 && error?.status < 500) {
+          localStorage.removeItem("token");
+          localStorage.removeItem("username");
+          localStorage.removeItem("email");
+          localStorage.removeItem("is_admin");
+          setUser(null);
+          return;
+        }
+
         setUser({
           token,
           username,
@@ -68,6 +140,16 @@ export default function App() {
       .finally(() => setAuthChecked(true));
   }, []);
 
+  const openDashboard = useCallback(() => {
+    setShowActivity(false);
+    setCurrentView("dashboard");
+  }, []);
+
+  const openBackgroundRemover = useCallback(() => {
+    setShowActivity(false);
+    setCurrentView("background-remover");
+  }, []);
+
   const handleLogin = useCallback((data) => {
     setUser({
       token: data.token,
@@ -75,29 +157,119 @@ export default function App() {
       email: data.email,
       isAdmin: !!data.is_admin,
     });
+    setCurrentView("dashboard");
   }, []);
 
   const handleLogout = useCallback(() => {
     const token = localStorage.getItem("token");
-    trackClientEvent("logout", token, {
-      page: showActivity ? "activity" : phase,
-    });
+    const page = activePageRef.current || (showActivity ? "activity" : currentView);
+
+    trackClientEvent("logout", token, { page });
 
     localStorage.removeItem("token");
     localStorage.removeItem("username");
     localStorage.removeItem("email");
     localStorage.removeItem("is_admin");
+
     setUser(null);
     setShowActivity(false);
+    setCurrentView("dashboard");
     setPhase("idle");
-  }, [phase, showActivity]);
+  }, [currentView, showActivity]);
+
+  useEffect(() => {
+    if (!authChecked) return undefined;
+
+    const token = localStorage.getItem("token");
+    const nextPage = getAnalyticsPage();
+    const now = Date.now();
+
+    if (!sessionStartedRef.current) {
+      sessionStartedRef.current = true;
+      sessionStartedAtRef.current = now;
+      trackClientEvent("session_start", token, {
+        page: nextPage,
+        details: {
+          referrer: typeof document !== "undefined" ? document.referrer || null : null,
+        },
+      });
+    }
+
+    const previousPage = activePageRef.current;
+    const previousEnteredAt = activePageEnteredAtRef.current;
+
+    if (previousPage && previousPage !== nextPage) {
+      trackClientEvent("page_leave", token, {
+        page: previousPage,
+        details: {
+          duration_ms: Math.max(0, now - previousEnteredAt),
+          to_page: nextPage,
+        },
+      });
+    }
+
+    if (!previousPage || previousPage !== nextPage) {
+      activePageRef.current = nextPage;
+      activePageEnteredAtRef.current = now;
+      trackClientEvent("page_view", token, {
+        page: nextPage,
+        details: {
+          from_page: previousPage || null,
+        },
+      });
+    }
+
+    return undefined;
+  }, [authChecked, getAnalyticsPage]);
+
+  useEffect(() => {
+    if (!authChecked || !sessionStartedRef.current) return undefined;
+
+    const intervalId = window.setInterval(() => {
+      const token = localStorage.getItem("token");
+      const now = Date.now();
+      const currentPage = activePageRef.current || getAnalyticsPage();
+
+      trackClientEvent("session_ping", token, {
+        page: currentPage,
+        details: {
+          page_duration_ms: Math.max(0, now - activePageEnteredAtRef.current),
+          session_duration_ms: Math.max(0, now - sessionStartedAtRef.current),
+        },
+      });
+    }, 30000);
+
+    return () => window.clearInterval(intervalId);
+  }, [authChecked, getAnalyticsPage]);
+
+  useEffect(() => {
+    if (!authChecked) return undefined;
+
+    const flushSessionEnd = () => {
+      const token = localStorage.getItem("token");
+      const now = Date.now();
+
+      trackClientEvent("session_end", token, {
+        page: activePageRef.current || getAnalyticsPage(),
+        details: {
+          page_duration_ms: Math.max(0, now - activePageEnteredAtRef.current),
+          session_duration_ms: Math.max(0, now - sessionStartedAtRef.current),
+        },
+      });
+    };
+
+    window.addEventListener("pagehide", flushSessionEnd);
+    return () => {
+      window.removeEventListener("pagehide", flushSessionEnd);
+    };
+  }, [authChecked, getAnalyticsPage]);
 
   useEffect(() => {
     if (!authChecked) return;
 
     const token = localStorage.getItem("token");
     const nextEvent = user ? (showActivity ? "activity_view" : "dashboard_view") : "auth_view";
-    const nextPage = user ? (showActivity ? "activity" : "dashboard") : "auth";
+    const nextPage = getAnalyticsPage();
     const nextKey = `${nextEvent}:${nextPage}`;
 
     if (trackedViewRef.current === nextKey) return;
@@ -107,10 +279,11 @@ export default function App() {
       page: nextPage,
       details: user ? { email: user.email } : null,
     });
-  }, [authChecked, showActivity, user]);
+  }, [authChecked, getAnalyticsPage, showActivity, user]);
 
   useEffect(() => {
     if (phase !== "done" || trackedResultRef.current) return;
+
     trackedResultRef.current = true;
 
     trackClientEvent("result_view", localStorage.getItem("token"), {
@@ -129,18 +302,18 @@ export default function App() {
     setOriginalFile(file);
     setOriginalUrl(objectUrl);
     setResultUrl(null);
-    setResultBlob(null);
     setErrorMsg("");
+    setCurrentView("background-remover");
     setPhase("processing");
     setProgress(10);
     trackedResultRef.current = false;
 
-    let ticker;
+    let progressTicker;
     let timeoutId;
     let didTimeout = false;
 
     try {
-      ticker = setInterval(() => {
+      progressTicker = setInterval(() => {
         setProgress((current) => Math.min(current + Math.random() * 8, 99));
       }, 400);
 
@@ -164,42 +337,45 @@ export default function App() {
         body: formData,
       });
 
-      clearInterval(ticker);
+      clearInterval(progressTicker);
       setProgress(95);
 
       if (!response.ok) {
-        const err = await response.json().catch(() => ({ detail: "Unknown error" }));
-        if (response.status === 401) {
+        const errorPayload = await response.json().catch(() => ({ detail: "Unknown error" }));
+
+        if (response.status === 401 || response.status === 403) {
           handleLogout();
         }
-        throw new Error(err.detail || `Server error: ${response.status}`);
+
+        throw new Error(errorPayload.detail || `Server error: ${response.status}`);
       }
 
       const blob = await response.blob();
       const nextResultUrl = URL.createObjectURL(blob);
-      setResultBlob(blob);
+
       setResultUrl(nextResultUrl);
       setProgress(100);
       setPhase("done");
-    } catch (err) {
-      if (err.name === "AbortError") {
+    } catch (error) {
+      if (error.name === "AbortError") {
         if (didTimeout) {
           setErrorMsg("The request timed out. Please try again, or check that the backend URL is correct.");
         }
+
         setPhase("idle");
         setProgress(0);
         return;
       }
 
-      setErrorMsg(err.message || "Something went wrong.");
+      setErrorMsg(formatUploadError(error.message));
       setPhase("idle");
       setProgress(0);
     } finally {
-      if (ticker) clearInterval(ticker);
+      if (progressTicker) clearInterval(progressTicker);
       if (timeoutId) window.clearTimeout(timeoutId);
       abortControllerRef.current = null;
     }
-  }, [handleLogout, originalUrl, resultUrl]);
+  }, [formatUploadError, handleLogout, originalUrl, resultUrl]);
 
   const handleCancel = useCallback(() => {
     trackClientEvent("upload_cancelled", localStorage.getItem("token"), {
@@ -209,83 +385,50 @@ export default function App() {
       },
     });
 
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
+    abortControllerRef.current?.abort();
   }, [originalFile]);
 
   const handleReset = useCallback(() => {
     if (originalUrl) URL.revokeObjectURL(originalUrl);
     if (resultUrl) URL.revokeObjectURL(resultUrl);
+
     setOriginalFile(null);
     setOriginalUrl(null);
     setResultUrl(null);
-    setResultBlob(null);
     setErrorMsg("");
     setProgress(0);
     setPhase("idle");
+    setCurrentView("dashboard");
     trackedResultRef.current = false;
   }, [originalUrl, resultUrl]);
 
-  const handleDownload = useCallback(async (bgColor = "transparent") => {
+  const handleDownload = useCallback(async (background = "transparent") => {
     if (!resultUrl) return;
 
+    const normalizedBackground = normalizeBackgroundSelection(background);
     const fileName = originalFile?.name?.replace(/\.[^.]+$/, "") || "image";
 
     const triggerDownload = (href) => {
       const link = document.createElement("a");
       link.href = href;
-      link.download = `${fileName}_${bgColor === "transparent" ? "nobg" : "bg"}.png`;
+      link.download = `${fileName}_${getBackgroundDownloadSuffix(normalizedBackground)}.png`;
       link.click();
     };
 
-    if (bgColor === "transparent") {
-      triggerDownload(resultUrl);
-      return;
-    }
-
     try {
-      const composedBlob = await new Promise((resolve, reject) => {
-        const img = new Image();
-        img.crossOrigin = "anonymous";
-        img.onload = () => {
-          const canvas = document.createElement("canvas");
-          canvas.width = img.naturalWidth || img.width;
-          canvas.height = img.naturalHeight || img.height;
-          const ctx = canvas.getContext("2d");
-
-          if (!ctx) {
-            reject(new Error("Canvas export is not supported in this browser."));
-            return;
-          }
-
-          ctx.fillStyle = bgColor;
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          canvas.toBlob((blob) => {
-            if (!blob) {
-              reject(new Error("Failed to prepare the colored PNG."));
-              return;
-            }
-            resolve(blob);
-          }, "image/png");
-        };
-        img.onerror = () => reject(new Error("Failed to prepare the image for download."));
-        img.src = resultUrl;
-      });
-
+      const composedBlob = await composeImageWithBackground(resultUrl, normalizedBackground);
       const downloadUrl = URL.createObjectURL(composedBlob);
       triggerDownload(downloadUrl);
       setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
-    } catch (err) {
-      setErrorMsg(err.message || "Failed to download image.");
+    } catch (error) {
+      setErrorMsg(error.message || "Failed to download image.");
     }
   }, [originalFile, resultUrl]);
 
   if (!authChecked) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: "var(--bg-base)" }}>
-        <svg className="spinner" width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#f5c800" strokeWidth="2" strokeLinecap="round">
+      <div className="flex min-h-screen items-center justify-center" style={{ background: "var(--bg-base)" }}>
+        <svg className="spinner" width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="var(--accent-bright)" strokeWidth="2" strokeLinecap="round">
           <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
         </svg>
       </div>
@@ -297,34 +440,32 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col relative overflow-hidden" style={{ background: "var(--bg-base)" }}>
-      <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full blur-[150px] pointer-events-none" style={{ background: "#f5c800", animation: "glowPulse1 12s ease-in-out infinite" }} />
-      <div className="absolute bottom-[-20%] right-[-10%] w-[40%] h-[40%] rounded-full blur-[150px] pointer-events-none" style={{ background: "#bc1888", animation: "glowPulse2 15s ease-in-out infinite" }} />
-      <div className="absolute inset-0 pointer-events-none" style={{ backgroundImage: "linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.03) 1px, transparent 1px)", backgroundSize: "64px 64px", WebkitMaskImage: "radial-gradient(circle at center, black, transparent 80%)", maskImage: "radial-gradient(circle at center, black, transparent 80%)" }} />
+    <div className="relative flex min-h-screen flex-col overflow-hidden" style={{ background: "var(--bg-base)" }}>
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            "radial-gradient(circle at 16% 20%, rgba(56, 189, 248, 0.12), transparent 25%), radial-gradient(circle at 84% 12%, rgba(99, 102, 241, 0.14), transparent 20%), radial-gradient(circle at 72% 76%, rgba(168, 85, 247, 0.12), transparent 24%)",
+        }}
+      />
 
-      <div className="relative z-10 flex flex-col flex-1">
+      <div className="relative z-10 flex flex-1 flex-col">
         <style>{`
-          @keyframes textShimmer {
-            to { background-position: 200% center; }
-          }
-          @keyframes glowPulse1 {
-            0%, 100% { opacity: 0.15; transform: scale(1); }
-            50% { opacity: 0.25; transform: scale(1.1); }
-          }
-          @keyframes glowPulse2 {
-            0%, 100% { opacity: 0.08; transform: scale(1); }
-            50% { opacity: 0.18; transform: scale(1.15); }
-          }
           @keyframes slideDown {
             from { transform: translate(-50%, -20px); opacity: 0; }
             to { transform: translate(-50%, 0); opacity: 1; }
           }
         `}</style>
 
-        {errorMsg && (
+        {errorMsg ? (
           <div
-            className="fixed top-8 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-5 py-3 rounded-full shadow-2xl backdrop-blur-xl transition-all"
-            style={{ background: "rgba(40, 15, 15, 0.9)", border: "1px solid rgba(248, 113, 113, 0.3)", color: "#f87171", animation: "slideDown 0.3s ease-out" }}
+            className="fixed left-1/2 top-8 z-50 flex -translate-x-1/2 items-center gap-3 rounded-full px-5 py-3 shadow-2xl backdrop-blur-xl transition-all"
+            style={{
+              background: "rgba(40, 15, 15, 0.9)",
+              border: "1px solid rgba(248, 113, 113, 0.3)",
+              color: "#f87171",
+              animation: "slideDown 0.3s ease-out",
+            }}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="10" />
@@ -332,78 +473,95 @@ export default function App() {
               <line x1="12" y1="16" x2="12.01" y2="16" />
             </svg>
             <span className="text-sm font-medium">{errorMsg}</span>
-            <button onClick={() => setErrorMsg("")} className="ml-2 opacity-60 hover:opacity-100 transition-opacity">
+            <button onClick={() => setErrorMsg("")} className="ml-2 opacity-60 transition-opacity hover:opacity-100">
               x
             </button>
           </div>
-        )}
+        ) : null}
 
         <Header
           user={user}
           onLogout={handleLogout}
           onOpenActivity={() => setShowActivity((current) => !current)}
           showActivity={showActivity}
+          onOpenTools={openDashboard}
+          currentView={currentView}
         />
 
-        <main className="flex-1 flex flex-col items-center justify-center px-4 py-12">
+        <main className="flex flex-1 flex-col items-center px-4 pb-14 pt-10 md:px-6">
           {showActivity && user.isAdmin ? (
             <ActivityDashboard user={user} onClose={() => setShowActivity(false)} onError={setErrorMsg} />
           ) : null}
 
-          {!showActivity && phase === "idle" ? (
-            <div className="fade-up w-full max-w-2xl">
-              <div className="text-center mb-12">
-                <h2 className="text-5xl md:text-7xl tracking-tight mb-4" style={{ fontFamily: "'Bebas Neue', sans-serif" }}>
-                  <span
-                    style={{
-                      background: "linear-gradient(to right, #f5c800 0%, #ffffff 50%, #f5c800 100%)",
-                      backgroundSize: "200% auto",
-                      WebkitBackgroundClip: "text",
-                      WebkitTextFillColor: "transparent",
-                      backgroundClip: "text",
-                      color: "transparent",
-                      animation: "textShimmer 3s linear infinite",
-                    }}
-                  >
-                    EditNest
-                  </span>
-                  <span style={{ color: "var(--text-primary)" }}> Background Remover</span>
-                </h2>
-                <p className="text-lg max-w-xl mx-auto" style={{ color: "var(--text-secondary)", lineHeight: "1.6" }}>
-                  Welcome, <span style={{ color: "#f5c800", fontWeight: "500" }}>{user.username}</span>! Upload a photo and let our AI seamlessly remove the background in seconds.
-                </p>
-              </div>
-              <UploadZone onFile={handleFile} />
-              <p
-                className="mt-4 text-center text-xs md:text-sm"
-                style={{ color: "var(--text-muted)" }}
-              >
-                Privacy note: Uploaded images are processed temporarily for background removal and are cleared automatically.
-              </p>
-            </div>
+          {!showActivity && currentView === "dashboard" ? (
+            <ToolDashboard
+              user={user}
+              hasCutout={Boolean(resultUrl)}
+              onOpenTool={openBackgroundRemover}
+            />
           ) : null}
 
-          {!showActivity && phase === "processing" ? (
-            <div className="fade-up flex flex-col items-center justify-center w-full max-w-md mt-8">
-              <svg className="spinner mb-8" width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#f5c800" strokeWidth="2" strokeLinecap="round">
+          {!showActivity && currentView === "background-remover" && phase === "idle" ? (
+            <section className="fade-up w-full max-w-4xl">
+              <div className="mb-10 text-center">
+                <p
+                  className="inline-flex rounded-full border px-4 py-1.5 text-sm"
+                  style={{
+                    background: "rgba(15, 23, 42, 0.7)",
+                    borderColor: "rgba(59, 130, 246, 0.24)",
+                    color: "#93c5fd",
+                  }}
+                >
+                  Instant transparent PNG export
+                </p>
+                <h2
+                  className="mx-auto mt-6 max-w-3xl text-5xl font-extrabold tracking-tight text-white md:text-6xl"
+                  style={{ letterSpacing: "-0.04em", lineHeight: 1.05 }}
+                >
+                  Remove backgrounds in seconds with a clean, studio-style workflow.
+                </h2>
+                <p className="mx-auto mt-5 max-w-2xl text-lg" style={{ color: "var(--text-secondary)", lineHeight: "1.8" }}>
+                  Upload a product shot, portrait, or catalog photo and get a polished transparent cutout right away.
+                </p>
+              </div>
+
+              <div
+                className="rounded-[32px] p-4 md:p-6"
+                style={{
+                  background: "linear-gradient(180deg, rgba(10, 15, 30, 0.88) 0%, rgba(2, 8, 23, 0.96) 100%)",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  boxShadow: "0 24px 90px rgba(0, 0, 0, 0.32)",
+                }}
+              >
+                <UploadZone onFile={handleFile} />
+              </div>
+
+              <p className="mt-5 text-center text-sm" style={{ color: "var(--text-muted)", lineHeight: "1.7" }}>
+                Your image is used only for temporary processing and transparent export.
+              </p>
+            </section>
+          ) : null}
+
+          {!showActivity && currentView === "background-remover" && phase === "processing" ? (
+            <div className="fade-up mt-12 flex w-full max-w-md flex-col items-center justify-center">
+              <svg className="spinner mb-8" width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="var(--accent-bright)" strokeWidth="2" strokeLinecap="round">
                 <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
               </svg>
               <ProcessingState progress={progress} fileName={originalFile?.name} />
               <button
                 onClick={handleCancel}
-                className="mt-8 px-6 py-2 rounded-xl text-sm font-medium transition-all hover:opacity-80"
+                className="mt-8 rounded-full px-6 py-2.5 text-sm font-medium transition-all hover:opacity-80"
                 style={{ background: "transparent", border: "1px solid var(--border)", color: "var(--text-secondary)" }}
               >
-                Cancel Upload
+                Cancel upload
               </button>
             </div>
           ) : null}
 
-          {!showActivity && phase === "done" ? (
+          {!showActivity && currentView === "background-remover" && phase === "done" ? (
             <div className="fade-up w-full max-w-5xl">
               <ResultView
                 originalFile={originalFile}
-                resultBlob={resultBlob}
                 originalUrl={originalUrl}
                 resultUrl={resultUrl}
                 onDownload={handleDownload}
@@ -414,43 +572,41 @@ export default function App() {
           ) : null}
         </main>
 
-        <footer className="text-center py-6 text-xs flex flex-col items-center gap-2" style={{ color: "var(--text-muted)" }}>
+        <footer className="flex flex-col items-center gap-2 py-8 text-center text-xs" style={{ color: "var(--text-muted)" }}>
           <p>
-            Powered by <span style={{ color: "#f5c800" }}>EditNest</span> - AI Background Remover
+            Powered by <span style={{ color: "var(--accent-bright)" }}>EditNest</span>
           </p>
-          <p>&copy; {new Date().getFullYear()} EditNest. All rights reserved.</p>
           <a
-            href="https://www.instagram.com/editnest99?igsh=MXVvdWZvd2Q4bDRwbQ=="
+            href="https://instagram.com/editnest99?igsh=MXVvdWZvd2Q4bDRwbQ=="
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1 mt-1 transition-opacity hover:opacity-80 font-medium"
+            className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs transition-opacity hover:opacity-80"
+            style={{
+              background: "rgba(255, 255, 255, 0.04)",
+              border: "1px solid rgba(255, 255, 255, 0.08)",
+              color: "var(--text-secondary)",
+            }}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="url(#ig-gradient)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <defs>
-                <linearGradient id="ig-gradient" x1="0%" y1="100%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="#f09433" />
-                  <stop offset="25%" stopColor="#e6683c" />
-                  <stop offset="50%" stopColor="#dc2743" />
-                  <stop offset="75%" stopColor="#cc2366" />
-                  <stop offset="100%" stopColor="#bc1888" />
-                </linearGradient>
-              </defs>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+              style={{ color: "#E1306C", filter: "drop-shadow(0 0 8px rgba(225, 48, 108, 0.35))" }}
+            >
               <rect x="2" y="2" width="20" height="20" rx="5" ry="5" />
               <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z" />
               <line x1="17.5" y1="6.5" x2="17.51" y2="6.5" />
             </svg>
-            <span
-              style={{
-                background: "linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%)",
-                WebkitBackgroundClip: "text",
-                WebkitTextFillColor: "transparent",
-                backgroundClip: "text",
-                color: "transparent",
-              }}
-            >
-              Follow us on Instagram
-            </span>
+            <span>Instagram @editnest99</span>
           </a>
+          <p>&copy; {new Date().getFullYear()} EditNest. All rights reserved.</p>
         </footer>
       </div>
     </div>

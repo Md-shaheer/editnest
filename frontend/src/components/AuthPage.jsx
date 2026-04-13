@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { signInWithGoogle } from "../firebase";
+import { signInWithApple, signInWithGoogle } from "../firebase";
 import { API_URL } from "../api";
 import { getSessionId } from "../analytics";
 
@@ -9,7 +9,9 @@ export default function AuthPage({ onLogin }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [authConfig, setAuthConfig] = useState({ inviteOnly: false, message: "" });
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [appleLoading, setAppleLoading] = useState(false);
   const [formLoading, setFormLoading] = useState(false);
 
   useEffect(() => {
@@ -17,7 +19,35 @@ export default function AuthPage({ onLogin }) {
       const timeoutId = setTimeout(() => setError(""), 4000);
       return () => clearTimeout(timeoutId);
     }
+    return undefined;
   }, [error]);
+
+  useEffect(() => {
+    let active = true;
+
+    fetch(`${API_URL}/auth/config`)
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error("Could not load auth config");
+        }
+        return response.json();
+      })
+      .then((data) => {
+        if (!active) return;
+        setAuthConfig({
+          inviteOnly: !!data.invite_only,
+          message: data.message || "",
+        });
+      })
+      .catch(() => {
+        if (!active) return;
+        setAuthConfig({ inviteOnly: false, message: "" });
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const getPasswordStrength = () => {
     if (!password) return 0;
@@ -48,6 +78,10 @@ export default function AuthPage({ onLogin }) {
       return nextMode === "login" ? "Login failed" : "Signup failed";
     }
 
+    if (message === "Failed to fetch" || message.toLowerCase().includes("failed to fetch")) {
+      return "Could not connect to the server. Please check that the backend is running and the API URL is correct.";
+    }
+
     if (message === "Not Found") {
       return "Google login backend is still updating. Please redeploy Railway and try again.";
     }
@@ -65,20 +99,35 @@ export default function AuthPage({ onLogin }) {
       return "Wrong email or password.";
     }
 
+    if (message === "Use Google login for this account") {
+      return "This account was created with Google. Please use Continue with Google.";
+    }
+
+    if (message === "Use Apple login for this account") {
+      return "This account was created with Apple. Please use Continue with Apple.";
+    }
+
     if (message === "Google authentication failed") {
       return "Google login failed. Please try again.";
+    }
+
+    if (
+      message === "Access restricted. This email is not approved for this website." ||
+      message.toLowerCase().includes("not approved for this website")
+    ) {
+      return "This website is private. Only approved email addresses can sign up or log in.";
     }
 
     return message;
   };
 
-  const handleGoogle = async () => {
+  const handleSocialLogin = async ({ providerName, signIn, setLoading }) => {
     setError("");
-    setGoogleLoading(true);
+    setLoading(true);
 
     try {
-      const googleUser = await signInWithGoogle();
-      const idToken = await googleUser.getIdToken();
+      const socialUser = await signIn();
+      const idToken = await socialUser.getIdToken();
       const response = await fetch(`${API_URL}/auth/google`, {
         method: "POST",
         headers: {
@@ -87,7 +136,8 @@ export default function AuthPage({ onLogin }) {
         },
         body: JSON.stringify({
           id_token: idToken,
-          username: googleUser.displayName || googleUser.email?.split("@")[0] || "",
+          username: socialUser.displayName || socialUser.email?.split("@")[0] || "",
+          provider: providerName,
         }),
       });
 
@@ -99,15 +149,33 @@ export default function AuthPage({ onLogin }) {
       persistAuth(data);
     } catch (err) {
       if (err?.code === "auth/popup-closed-by-user") {
-        setError("Google popup closed before login completed.");
+        setError(`${providerName === "apple" ? "Apple" : "Google"} popup closed before login completed.`);
       } else if (err?.code === "auth/unauthorized-domain") {
-        setError("This website domain is not allowed in Firebase Google login.");
+        setError(`This website domain is not allowed in Firebase ${providerName === "apple" ? "Apple" : "Google"} login.`);
+      } else if (err?.code === "auth/operation-not-allowed") {
+        setError(`${providerName === "apple" ? "Apple" : "Google"} login is not enabled yet.`);
       } else {
-        setError(toFriendlyError(err.message || "Google authentication failed"));
+        setError(toFriendlyError(err.message || `${providerName === "apple" ? "Apple" : "Google"} authentication failed`));
       }
     } finally {
-      setGoogleLoading(false);
+      setLoading(false);
     }
+  };
+
+  const handleGoogle = async () => {
+    await handleSocialLogin({
+      providerName: "google",
+      signIn: signInWithGoogle,
+      setLoading: setGoogleLoading,
+    });
+  };
+
+  const handleApple = async () => {
+    await handleSocialLogin({
+      providerName: "apple",
+      signIn: signInWithApple,
+      setLoading: setAppleLoading,
+    });
   };
 
   const handleSubmit = async () => {
@@ -171,8 +239,8 @@ export default function AuthPage({ onLogin }) {
         </div>
       )}
 
-      <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full blur-[150px] pointer-events-none" style={{ background: "#f5c800", opacity: 0.15 }} />
-      <div className="absolute bottom-[-20%] right-[-10%] w-[40%] h-[40%] rounded-full blur-[150px] pointer-events-none" style={{ background: "#bc1888", opacity: 0.08 }} />
+      <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full blur-[150px] pointer-events-none" style={{ background: "#4169e1", opacity: 0.18 }} />
+      <div className="absolute bottom-[-20%] right-[-10%] w-[40%] h-[40%] rounded-full blur-[150px] pointer-events-none" style={{ background: "#8a2be2", opacity: 0.12 }} />
       <div className="absolute inset-0 pointer-events-none" style={{ backgroundImage: "linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.03) 1px, transparent 1px)", backgroundSize: "64px 64px", WebkitMaskImage: "radial-gradient(circle at center, black, transparent 80%)", maskImage: "radial-gradient(circle at center, black, transparent 80%)" }} />
 
       <div className="w-full max-w-md relative z-10">
@@ -181,7 +249,7 @@ export default function AuthPage({ onLogin }) {
           <h1 style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "2.5rem", color: "var(--text-primary)" }}>
             <span
               style={{
-                background: "linear-gradient(to right, #f5c800 0%, #ffffff 50%, #f5c800 100%)",
+                background: "linear-gradient(to right, #8a2be2 0%, #ffffff 45%, #00e5ff 100%)",
                 backgroundSize: "200% auto",
                 WebkitBackgroundClip: "text",
                 WebkitTextFillColor: "transparent",
@@ -208,10 +276,26 @@ export default function AuthPage({ onLogin }) {
           }
         `}</style>
 
-        <div className="rounded-3xl p-8 shadow-2xl backdrop-blur-xl" style={{ background: "rgba(30, 30, 32, 0.6)", border: "1px solid rgba(255, 255, 255, 0.05)" }}>
+        <div className="rounded-3xl p-8 shadow-2xl backdrop-blur-xl" style={{ background: "rgba(18, 14, 34, 0.72)", border: "1px solid var(--border)" }}>
+          {authConfig.inviteOnly ? (
+            <div
+              className="mb-4 rounded-2xl px-4 py-3 text-left"
+              style={{
+                background: "rgba(56, 189, 248, 0.08)",
+                border: "1px solid rgba(56, 189, 248, 0.18)",
+                color: "#c6f4ff",
+              }}
+            >
+              <p className="text-sm font-medium">Private access only</p>
+              <p className="mt-1 text-xs" style={{ color: "var(--text-secondary)" }}>
+                {authConfig.message || "Use an approved email address to sign up or log in."}
+              </p>
+            </div>
+          ) : null}
+
           <button
             onClick={handleGoogle}
-            disabled={googleLoading || formLoading}
+            disabled={googleLoading || appleLoading || formLoading}
             className="w-full py-3 rounded-xl text-sm font-medium mb-4 flex items-center justify-center gap-3 transition-all hover:opacity-90 disabled:opacity-70 disabled:cursor-not-allowed"
             style={{ background: "white", color: "#1a1a1a", border: "1px solid #e0e0e0" }}
           >
@@ -269,7 +353,7 @@ export default function AuthPage({ onLogin }) {
                 border: mode === "signup" ? "1px solid var(--border)" : "1px solid transparent",
               }}
             >
-              Sign Up
+              Sign up
             </button>
           </div>
 
@@ -279,7 +363,7 @@ export default function AuthPage({ onLogin }) {
                 <label className="text-xs mb-1 block" style={{ color: "var(--text-secondary)" }}>Username</label>
                 <input
                   type="text"
-                  placeholder="yourname"
+                  placeholder="Your name"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   className="w-full px-4 py-3 rounded-xl text-sm outline-none"
@@ -314,8 +398,8 @@ export default function AuthPage({ onLogin }) {
               {mode === "signup" && password && (
                 <div className="mt-2">
                   <div className="flex gap-1 mb-1">
-                    <div className="h-1 flex-1 rounded-full transition-colors duration-300" style={{ background: strength >= 1 ? (strength === 1 ? "#f87171" : strength === 2 ? "#f5c800" : "#34d399") : "var(--border)" }} />
-                    <div className="h-1 flex-1 rounded-full transition-colors duration-300" style={{ background: strength >= 2 ? (strength === 2 ? "#f5c800" : "#34d399") : "var(--border)" }} />
+                    <div className="h-1 flex-1 rounded-full transition-colors duration-300" style={{ background: strength >= 1 ? (strength === 1 ? "#f87171" : strength === 2 ? "#4169e1" : "#00e5ff") : "var(--border)" }} />
+                    <div className="h-1 flex-1 rounded-full transition-colors duration-300" style={{ background: strength >= 2 ? (strength === 2 ? "#4169e1" : "#00e5ff") : "var(--border)" }} />
                     <div className="h-1 flex-1 rounded-full transition-colors duration-300" style={{ background: strength >= 3 ? "#34d399" : "var(--border)" }} />
                   </div>
                   <p className="text-xs text-right" style={{ color: "var(--text-muted)" }}>
@@ -327,19 +411,19 @@ export default function AuthPage({ onLogin }) {
 
             <button
               onClick={handleSubmit}
-              disabled={googleLoading || formLoading}
-              className="w-full py-3 rounded-xl text-sm font-medium mt-2"
-              style={{ background: "#f5c800", color: "#0a0a0b", opacity: formLoading || googleLoading ? 0.7 : 1 }}
+              disabled={googleLoading || appleLoading || formLoading}
+              className="w-full py-3 rounded-xl text-sm font-medium mt-2 transition-all hover:scale-[1.02]"
+              style={{ background: "var(--accent-gradient)", color: "#ffffff", boxShadow: "0 0 25px rgba(65, 105, 225, 0.35)", opacity: formLoading || googleLoading || appleLoading ? 0.7 : 1 }}
             >
-              {formLoading ? "Please wait..." : mode === "login" ? "Login" : "Create Account"}
+              {formLoading ? "Please wait..." : mode === "login" ? "Login" : "Create account"}
             </button>
           </div>
         </div>
 
         <p className="text-center mt-4 text-xs" style={{ color: "var(--text-muted)" }}>
           {mode === "login" ? "Don't have an account? " : "Already have an account? "}
-          <button onClick={() => setMode(mode === "login" ? "signup" : "login")} style={{ color: "#f5c800" }}>
-            {mode === "login" ? "Sign Up" : "Login"}
+          <button onClick={() => setMode(mode === "login" ? "signup" : "login")} style={{ color: "var(--accent-bright)" }}>
+            {mode === "login" ? "Sign up" : "Login"}
           </button>
         </p>
       </div>

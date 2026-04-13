@@ -4,3 +4,14 @@ backend/venv/
 backend/__pycache__/
 backend/*.db
 .venv/
+node_modules/
+__pycache__/
+*.pyc
+*.db
+*.db-shm
+*.db-wal
+*.log
+cache/
+tmp-*.png
+tmp-*.jpg
+backend/.env

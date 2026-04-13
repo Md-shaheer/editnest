@@ -29,6 +29,15 @@ export async function trackClientEvent(event, token = null, options = {}) {
   if (!event) return;
 
   try {
+    const details = {
+      ...(options.details || {}),
+      path: typeof window !== "undefined" ? window.location.pathname : null,
+    };
+
+    if (event === "session_start" && typeof document !== "undefined" && !details.referrer) {
+      details.referrer = document.referrer || null;
+    }
+
     await fetch(`${API_URL}/analytics/track`, {
       method: "POST",
       headers: {
@@ -40,7 +49,7 @@ export async function trackClientEvent(event, token = null, options = {}) {
         event,
         page: options.page || null,
         session_id: getSessionId(),
-        details: options.details || null,
+        details,
       }),
       keepalive: true,
     });
