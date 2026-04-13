@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { API_URL } from "../api";
 
+const DEFAULT_APP_TIME_ZONE = "Asia/Kolkata";
+
 function StatCard({ label, value, hint }) {
   return (
     <div
@@ -25,11 +27,11 @@ function StatCard({ label, value, hint }) {
   );
 }
 
-function formatDateTime(value) {
+function formatDateTime(value, timeZone = DEFAULT_APP_TIME_ZONE) {
   if (!value) return "-";
 
   try {
-    return new Intl.DateTimeFormat("en-IN", {
+    const options = {
       year: "numeric",
       month: "short",
       day: "2-digit",
@@ -37,10 +39,20 @@ function formatDateTime(value) {
       minute: "2-digit",
       second: "2-digit",
       timeZoneName: "short",
-    }).format(new Date(value));
+    };
+
+    if (timeZone) {
+      options.timeZone = timeZone;
+    }
+
+    return new Intl.DateTimeFormat("en-IN", options).format(new Date(value));
   } catch {
     return value;
   }
+}
+
+function formatUtcDateTime(value) {
+  return formatDateTime(value, "UTC");
 }
 
 function formatDetails(details) {
@@ -64,6 +76,26 @@ function formatDuration(totalSeconds) {
   const hours = Math.floor(minutes / 60);
   const remainingMinutes = minutes % 60;
   return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+}
+
+function TimestampPair({ value, appTimeZone, prefix = null }) {
+  if (!value) {
+    return "-";
+  }
+
+  const appTime = formatDateTime(value, appTimeZone);
+  const utcTime = formatUtcDateTime(value);
+
+  return (
+    <div className="space-y-1">
+      <p style={{ color: "var(--text-secondary)" }}>
+        {prefix ? `${prefix}: ` : ""}{appTime}
+      </p>
+      <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+        UTC: {utcTime}
+      </p>
+    </div>
+  );
 }
 
 export default function ActivityDashboard({ user, onClose, onError }) {
@@ -116,6 +148,7 @@ export default function ActivityDashboard({ user, onClose, onError }) {
 
   const topActions = useMemo(() => summary?.action_counts?.slice(0, 6) || [], [summary]);
   const recentSessions = useMemo(() => summary?.recent_sessions || [], [summary]);
+  const appTimeZone = summary?.timezone || DEFAULT_APP_TIME_ZONE;
 
   return (
     <section className="w-full max-w-7xl">
@@ -183,7 +216,7 @@ export default function ActivityDashboard({ user, onClose, onError }) {
               Recent Activity
             </h3>
             <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-              Latest 100 events
+              App time: {appTimeZone} | Original: UTC
             </span>
           </div>
 
@@ -213,8 +246,8 @@ export default function ActivityDashboard({ user, onClose, onError }) {
                 ) : (
                   events.map((event) => (
                     <tr key={event.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-                      <td className="py-3 pr-4 align-top" style={{ color: "var(--text-secondary)" }}>
-                        {formatDateTime(event.created_at)}
+                      <td className="py-3 pr-4 align-top">
+                        <TimestampPair value={event.created_at} appTimeZone={appTimeZone} />
                       </td>
                       <td className="py-3 pr-4 align-top" style={{ color: "var(--text-primary)" }}>
                         {event.email || event.session_id || "Anonymous"}
@@ -309,9 +342,9 @@ export default function ActivityDashboard({ user, onClose, onError }) {
                     <p className="mt-1 text-xs" style={{ color: "var(--text-secondary)" }}>
                       {item.total_events} events, {item.total_page_views} page views, {item.total_uploads} uploads
                     </p>
-                    <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
-                      Last seen: {formatDateTime(item.last_seen_at)}
-                    </p>
+                    <div className="mt-1 text-xs">
+                      <TimestampPair value={item.last_seen_at} appTimeZone={appTimeZone} prefix="Last seen" />
+                    </div>
                   </div>
                 ))
               )}

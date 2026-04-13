@@ -1273,6 +1273,7 @@ def get_analytics_summary(
             "avg_session_seconds": int(average_session_seconds or 0),
             "avg_page_seconds": int(average_page_seconds or 0),
         },
+        "timezone": APP_TIMEZONE_NAME,
         "action_counts": action_counts,
         "recent_users": recent_users,
         "recent_sessions": recent_sessions,
