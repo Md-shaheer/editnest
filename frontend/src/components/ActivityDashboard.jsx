@@ -55,10 +55,30 @@ function formatUtcDateTime(value) {
   return formatDateTime(value, "UTC");
 }
 
+function formatActionLabel(value) {
+  if (!value) return "-";
+  return String(value)
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function formatDetails(details) {
   if (!details) return "-";
-  const text = JSON.stringify(details);
-  return text.length > 120 ? `${text.slice(0, 117)}...` : text;
+
+  if (typeof details !== "object") {
+    return String(details);
+  }
+
+  const parts = Object.entries(details)
+    .filter(([, value]) => value !== null && value !== undefined && value !== "")
+    .map(([key, value]) => `${key}: ${typeof value === "object" ? JSON.stringify(value) : value}`);
+
+  if (!parts.length) return "-";
+
+  const text = parts.join(" | ");
+  return text.length > 140 ? `${text.slice(0, 137)}...` : text;
 }
 
 function formatDuration(totalSeconds) {
@@ -78,21 +98,25 @@ function formatDuration(totalSeconds) {
   return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
 }
 
-function TimestampPair({ value, appTimeZone, prefix = null }) {
+function TimestampPair({ value, utcValue, appTimeZone, prefix = null }) {
   if (!value) {
     return "-";
   }
 
   const appTime = formatDateTime(value, appTimeZone);
-  const utcTime = formatUtcDateTime(value);
+  const utcTime = formatUtcDateTime(utcValue || value);
 
   return (
-    <div className="space-y-1">
-      <p style={{ color: "var(--text-secondary)" }}>
-        {prefix ? `${prefix}: ` : ""}{appTime}
+    <div className="space-y-1 leading-5">
+      <p className="text-xs font-medium uppercase tracking-[0.12em]" style={{ color: "#60a5fa" }}>
+        {prefix ? `${prefix} App Time` : "App Time"}
       </p>
-      <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-        UTC: {utcTime}
+      <p style={{ color: "var(--text-primary)" }}>{appTime}</p>
+      <p className="text-xs font-medium uppercase tracking-[0.12em]" style={{ color: "#94a3b8" }}>
+        Original UTC
+      </p>
+      <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
+        {utcTime}
       </p>
     </div>
   );
@@ -147,6 +171,7 @@ export default function ActivityDashboard({ user, onClose, onError }) {
   };
 
   const topActions = useMemo(() => summary?.action_counts?.slice(0, 6) || [], [summary]);
+  const recentLogins = useMemo(() => summary?.recent_logins || [], [summary]);
   const recentSessions = useMemo(() => summary?.recent_sessions || [], [summary]);
   const appTimeZone = summary?.timezone || DEFAULT_APP_TIME_ZONE;
 
@@ -216,7 +241,7 @@ export default function ActivityDashboard({ user, onClose, onError }) {
               Recent Activity
             </h3>
             <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-              App time: {appTimeZone} | Original: UTC
+              Latest important events | App: {appTimeZone} | Original: UTC
             </span>
           </div>
 
@@ -247,10 +272,14 @@ export default function ActivityDashboard({ user, onClose, onError }) {
                   events.map((event) => (
                     <tr key={event.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
                       <td className="py-3 pr-4 align-top">
-                        <TimestampPair value={event.created_at} appTimeZone={appTimeZone} />
+                        <TimestampPair
+                          value={event.created_at}
+                          utcValue={event.created_at_utc}
+                          appTimeZone={appTimeZone}
+                        />
                       </td>
                       <td className="py-3 pr-4 align-top" style={{ color: "var(--text-primary)" }}>
-                        {event.email || event.session_id || "Anonymous"}
+                        {event.email || event.details?.email || event.session_id || "Anonymous"}
                       </td>
                       <td className="py-3 pr-4 align-top">
                         <span
@@ -261,7 +290,7 @@ export default function ActivityDashboard({ user, onClose, onError }) {
                             border: "1px solid rgba(59, 130, 246, 0.2)",
                           }}
                         >
-                          {event.event}
+                          {formatActionLabel(event.event)}
                         </span>
                       </td>
                       <td className="py-3 align-top break-all" style={{ color: "var(--text-secondary)" }}>
@@ -276,6 +305,43 @@ export default function ActivityDashboard({ user, onClose, onError }) {
         </div>
 
         <div className="flex flex-col gap-6">
+          <div
+            className="rounded-3xl p-6"
+            style={{
+              background: "rgba(20, 20, 22, 0.88)",
+              border: "1px solid var(--border)",
+            }}
+          >
+            <h3 className="text-lg font-semibold mb-4" style={{ color: "var(--text-primary)" }}>
+              Recent Login Emails
+            </h3>
+
+            <div className="space-y-4">
+              {recentLogins.length === 0 ? (
+                <p style={{ color: "var(--text-secondary)" }}>No login emails tracked yet.</p>
+              ) : (
+                recentLogins.map((item) => (
+                  <div key={`${item.id}-${item.created_at}`} className="rounded-2xl p-4" style={{ background: "rgba(255,255,255,0.03)" }}>
+                    <p className="text-sm font-medium break-all" style={{ color: "var(--text-primary)" }}>
+                      {item.email || "Unknown email"}
+                    </p>
+                    <p className="mt-2 text-xs" style={{ color: "var(--text-secondary)" }}>
+                      {formatActionLabel(item.event)}
+                    </p>
+                    <div className="mt-2 text-xs">
+                      <TimestampPair
+                        value={item.created_at}
+                        utcValue={item.created_at_utc}
+                        appTimeZone={appTimeZone}
+                        prefix="Login"
+                      />
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
           <div
             className="rounded-3xl p-6"
             style={{
@@ -343,7 +409,12 @@ export default function ActivityDashboard({ user, onClose, onError }) {
                       {item.total_events} events, {item.total_page_views} page views, {item.total_uploads} uploads
                     </p>
                     <div className="mt-1 text-xs">
-                      <TimestampPair value={item.last_seen_at} appTimeZone={appTimeZone} prefix="Last seen" />
+                      <TimestampPair
+                        value={item.last_seen_at}
+                        utcValue={item.last_seen_at_utc}
+                        appTimeZone={appTimeZone}
+                        prefix="Last Seen"
+                      />
                     </div>
                   </div>
                 ))

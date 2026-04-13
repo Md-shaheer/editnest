@@ -233,6 +233,17 @@ ALLOWED_CLIENT_EVENTS = {
     "session_end",
 }
 
+NOISY_ACTIVITY_EVENTS = {
+    "session_ping",
+    "page_leave",
+}
+
+LOGIN_SUCCESS_EVENTS = {
+    "login_success",
+    "google_login_success",
+    "apple_login_success",
+}
+
 SUPPORTED_AUTH_PROVIDERS = {
     "google": "Google",
     "apple": "Apple",
@@ -344,6 +355,13 @@ def serialize_timestamp(value: Optional[datetime]) -> Optional[str]:
     if not normalized_value:
         return None
     return normalized_value.astimezone(APP_TIMEZONE).isoformat()
+
+
+def serialize_timestamp_utc(value: Optional[datetime]) -> Optional[str]:
+    normalized_value = normalize_timestamp_for_math(value)
+    if not normalized_value:
+        return None
+    return normalized_value.astimezone(timezone.utc).isoformat()
 
 
 def clamp_non_negative_int(value: Any) -> Optional[int]:
@@ -481,9 +499,9 @@ def get_or_create_analytics_session(
         referrer = details.get("referrer") or details.get("document_referrer")
 
     if session:
-        if resolved_user_id and not session.user_id:
+        if resolved_user_id and session.user_id != resolved_user_id:
             session.user_id = resolved_user_id
-        if resolved_email and not session.email:
+        if resolved_email and session.email != resolved_email:
             session.email = resolved_email
         if resolved_email:
             session.is_authenticated = True
@@ -749,6 +767,7 @@ def serialize_activity(activity: ActivityEvent):
         "session_id": activity.session_id,
         "details": decode_details(activity.details),
         "created_at": serialize_timestamp(activity.created_at),
+        "created_at_utc": serialize_timestamp_utc(activity.created_at),
     }
 
 
@@ -772,8 +791,11 @@ def serialize_analytics_session(session: AnalyticsSession):
         "total_uploads": session.total_uploads or 0,
         "duration_seconds": get_effective_session_duration(session),
         "started_at": serialize_timestamp(session.started_at),
+        "started_at_utc": serialize_timestamp_utc(session.started_at),
         "last_seen_at": serialize_timestamp(session.last_seen_at),
+        "last_seen_at_utc": serialize_timestamp_utc(session.last_seen_at),
         "ended_at": serialize_timestamp(session.ended_at),
+        "ended_at_utc": serialize_timestamp_utc(session.ended_at),
         "ip_address": session.ip_address,
     }
 
@@ -1206,6 +1228,7 @@ def get_analytics_summary(
         {"event": event, "count": count}
         for event, count in (
             db.query(ActivityEvent.event, func.count(ActivityEvent.id))
+            .filter(~ActivityEvent.event.in_(NOISY_ACTIVITY_EVENTS))
             .group_by(ActivityEvent.event)
             .order_by(func.count(ActivityEvent.id).desc())
             .all()
@@ -1237,6 +1260,20 @@ def get_analytics_summary(
         for session in (
             db.query(AnalyticsSession)
             .order_by(AnalyticsSession.last_seen_at.desc(), AnalyticsSession.started_at.desc())
+            .limit(12)
+            .all()
+        )
+    ]
+
+    recent_logins = [
+        serialize_activity(event)
+        for event in (
+            db.query(ActivityEvent)
+            .filter(
+                ActivityEvent.email.isnot(None),
+                ActivityEvent.event.in_(LOGIN_SUCCESS_EVENTS),
+            )
+            .order_by(ActivityEvent.created_at.desc(), ActivityEvent.id.desc())
             .limit(12)
             .all()
         )
@@ -1276,6 +1313,7 @@ def get_analytics_summary(
         "timezone": APP_TIMEZONE_NAME,
         "action_counts": action_counts,
         "recent_users": recent_users,
+        "recent_logins": recent_logins,
         "recent_sessions": recent_sessions,
         "top_pages": top_pages,
     }
@@ -1284,12 +1322,16 @@ def get_analytics_summary(
 @app.get("/analytics/events")
 def get_analytics_events(
     limit: int = Query(50, ge=1, le=200),
+    include_noise: bool = Query(False),
     authorization: str = Header(None),
     db: Session = Depends(get_db)
 ):
     require_admin_user(db, authorization)
+    events_query = db.query(ActivityEvent)
+    if not include_noise:
+        events_query = events_query.filter(~ActivityEvent.event.in_(NOISY_ACTIVITY_EVENTS))
     events = (
-        db.query(ActivityEvent)
+        events_query
         .order_by(ActivityEvent.created_at.desc(), ActivityEvent.id.desc())
         .limit(limit)
         .all()
